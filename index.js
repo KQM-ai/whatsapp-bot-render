@@ -27,7 +27,7 @@ client.on('message', async (msg) => {
   const senderId = msg.author || msg.from;
   const text = msg.body;
 
-  console.log([Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text});
+  console.log('[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text}');
 
   // Optional: Send to your n8n webhook
   await axios.post('https://your-n8n-webhook-url/webhook/whatsapp-incoming', {
