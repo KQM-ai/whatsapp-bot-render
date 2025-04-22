@@ -1,20 +1,16 @@
 {
   "name": "whatsapp-bot-render",
   "version": "1.0.0",
+  "description": "A 24/7 WhatsApp bot using whatsapp-web.js",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/KQM-ai/whatsapp-bot-render.git"
+  "dependencies": {
+    "whatsapp-web.js": "^1.21.0",
+    "qrcode-terminal": "^0.12.0"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/KQM-ai/whatsapp-bot-render/issues"
-  },
-  "homepage": "https://github.com/KQM-ai/whatsapp-bot-render#readme",
-  "description": ""
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }
