@@ -30,7 +30,7 @@ client.on('message', async (msg) => {
   console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text}`);
 
   // Optional: Send to your n8n webhook
-  await axios.post('https://your-n8n-webhook-url/webhook/whatsapp-incoming', {
+  await axios.post('https://kqm.app.n8n.cloud/webhook-test/28503625-b022-485b-af09-06cf4fd76802', {
     groupId,
     senderId,
     text
