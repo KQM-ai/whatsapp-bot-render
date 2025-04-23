@@ -30,7 +30,7 @@ client.on('message', async (msg) => {
   console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text}`);
 
   // Optional: Send to your n8n webhook
-  await axios.post('https://kqm.app.n8n.cloud/webhook-test/28503625-b022-485b-af09-06cf4fd76802', {
+  await axios.post('https://kqm.app.n8n.cloud/webhook/28503625-b022-485b-af09-06cf4fd76802', {
     groupId,
     senderId,
     text
