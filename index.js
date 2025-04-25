@@ -142,7 +142,7 @@ try {
       ]);
       if (error) console.error('❌ Supabase insert error:', error.message);
 
-      await axios.post('https://kqmdigital.app.n8n.cloud/webhook/28503625-b022-485b-af09-06cf4fd76802', {
+      await axios.post('https://kqmdigital.app.n8n.cloud/webhook/789280c9-ef0c-4c3a-b584-5b3036e5d799', {
         groupId,
         senderId,
         text,
