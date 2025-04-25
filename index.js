@@ -172,17 +172,16 @@ app.post('/send-message', async (req, res) => {
   }
 });
 
+app.get('/', (_, res) => res.send('✅ Bot is alive'));
+
+// ✅ Start Express
 const PORT = 3000;
-
-// ✅ Health check route first
-app.get('/', (req, res) => {
-  res.send('✅ Bot is alive');
-});
-
-// ✅ Start the Express server
 app.listen(PORT, () => {
-  console.log(`🚀 Bot is listening on http://localhost:${PORT}`);
+  console.log(`🚀 Server is listening on http://localhost:${PORT}`);
 });
 
-// ✅ Load WhatsApp session and start bot
-loadSession().then(() => client.initialize());
+// ✅ Load and Initialize
+loadSession().then(() => {
+  setupClientEvents(client);
+  client.initialize();
+});
