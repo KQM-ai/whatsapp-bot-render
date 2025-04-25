@@ -110,7 +110,7 @@ function setupClientEvents(client) {
       const groupId = msg.from;
       const senderId = msg.author || msg.from;
       const text = msg.body;
-      const messageId = msg.id.id;
+      const messageId = msg?.id?.id?.toString?.() || '';
 
       let replyInfo = null;
       try {
@@ -141,7 +141,7 @@ function setupClientEvents(client) {
         groupId,
         senderId,
         text,
-        messageId,
+        messageId: String(messageId),
         reply_to_message: replyInfo
       }).catch(err => {
         console.error('❌ Failed to send to n8n:', err.message);
