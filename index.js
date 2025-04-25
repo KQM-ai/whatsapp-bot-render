@@ -45,6 +45,7 @@ async function saveSession(session) {
 
 const client = new Client({
   puppeteer: { headless: true },
+  ignoreSelfMessages: false,
   session: sessionData // inject session data if available
 });
 
