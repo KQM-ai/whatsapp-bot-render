@@ -118,17 +118,18 @@ try {
       const messageId = msg?.id?.id?.toString?.() || '';
 
       let replyInfo = null;
-      try {
-        if (typeof msg.hasQuotedMsg === 'function' && await msg.hasQuotedMsg()) {
-          const quoted = await msg.getQuotedMessage();
-          replyInfo = {
-            message_id: quoted?.id?.id || '',
-            text: quoted?.body || ''
-          };
-        }
-      } catch (err) {
-        console.warn('⚠️ Could not extract quoted message:', err.message);
-      }
+
+try {
+  const quoted = await msg.getQuotedMessage?.();
+  if (quoted?.id?.id) {
+    replyInfo = {
+      message_id: quoted.id.id,
+      text: quoted.body || ''
+    };
+  }
+} catch (err) {
+  console.warn('⚠️ Could not extract quoted message:', err.message);
+}
 
       console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text} | [messageId]: ${messageId}`);
 
