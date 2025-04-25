@@ -98,12 +98,16 @@ app.post('/send-message', async (req, res) => {
 });
 
 const PORT = 3000;
+
+// ✅ Health check route first
+app.get('/', (req, res) => {
+  res.send('✅ Bot is alive');
+});
+
+// ✅ Start the Express server
 app.listen(PORT, () => {
   console.log(`🚀 Bot is listening on http://localhost:${PORT}`);
 });
 
-app.get('/', (req, res) => {
-  res.send('✅ Bot is alive');
-});
-// ✅ Load session before initializing client
+// ✅ Load WhatsApp session and start bot
 loadSession().then(() => client.initialize());
