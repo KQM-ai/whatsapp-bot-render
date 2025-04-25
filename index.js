@@ -4,7 +4,7 @@ const express = require('express');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
-// ✅ Setup Supabase Client
+// ✅ Supabase
 const supabase = createClient(
   'https://vowebbdkibibcvrgqvqy.supabase.co',
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvd2ViYmRraWJpYmN2cmdxdnF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzODUxMzQsImV4cCI6MjA2MDk2MTEzNH0.GZYTU_j86IGBZFNWeSZvHHiG9Ki4ybkyY7ut9Jz800E'
@@ -14,7 +14,9 @@ const app = express();
 app.use(express.json());
 
 let sessionData = null;
+let isReconnecting = false;
 
+// ✅ Load session from Supabase
 async function loadSession() {
   try {
     const { data, error } = await supabase
@@ -24,7 +26,7 @@ async function loadSession() {
       .limit(1)
       .single();
 
-    if (!error && data?.session_data) {
+    if (data?.session_data) {
       sessionData = data.session_data;
       console.log('✅ Loaded session from Supabase');
     } else {
@@ -35,6 +37,7 @@ async function loadSession() {
   }
 }
 
+// ✅ Save session to Supabase
 async function saveSession(session) {
   try {
     const { error } = await supabase.from('whatsapp_sessions').insert([
@@ -43,7 +46,6 @@ async function saveSession(session) {
         session_data: session,
       },
     ]);
-
     if (error) console.error('❌ Failed to save session:', error);
     else console.log('💾 Session saved to Supabase');
   } catch (err) {
@@ -51,92 +53,107 @@ async function saveSession(session) {
   }
 }
 
-const client = new Client({
-  puppeteer: { headless: true },
-  ignoreSelfMessages: false,
-  session: sessionData,
-});
+// ✅ Create client (reusable)
+function createWhatsAppClient() {
+  return new Client({
+    puppeteer: {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    },
+    ignoreSelfMessages: false,
+    session: sessionData
+  });
+}
 
-// ✅ QR + Session Lifecycle Events
-client.on('qr', (qr) => {
-  console.log('📱 Scan your QR here:');
-  console.log('🔗 https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr));
-});
+let client = createWhatsAppClient();
 
-client.on('authenticated', async (session) => {
-  console.log('🔐 Authenticated!');
-  await saveSession(session);
-});
+// ✅ Setup Event Handlers
+function setupClientEvents(client) {
+  client.on('qr', (qr) => {
+    console.log('📱 Scan QR Code:');
+    console.log('🔗 https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr));
+  });
 
-client.on('auth_failure', (msg) => {
-  console.error('❌ AUTHENTICATION FAILURE:', msg);
-});
+  client.on('authenticated', async (session) => {
+    console.log('🔐 Authenticated!');
+    await saveSession(session);
+  });
 
-client.on('disconnected', (reason) => {
-  console.warn('⚠️ Disconnected:', reason);
-  client.destroy();
-  client.initialize(); // Attempt reconnection
-});
+  client.on('auth_failure', (msg) => {
+    console.error('❌ AUTHENTICATION FAILURE:', msg);
+  });
 
-client.on('ready', () => {
-  console.log('✅ WhatsApp Bot is ready!');
-});
-
-// ✅ Message Handler with Try/Catch
-client.on('message', async (msg) => {
-  if (!msg.from.endsWith('@g.us')) return;
-
-  try {
-    const groupId = msg.from;
-    const senderId = msg.author || msg.from;
-    const text = msg.body;
-    const messageId = msg.id.id;
-
-    let replyInfo = null;
-
-    if (typeof msg.hasQuotedMsg === 'function' && await msg.hasQuotedMsg()) {
-      try {
-        const quoted = await msg.getQuotedMessage();
-        replyInfo = {
-          message_id: quoted.id.id,
-          text: quoted.body,
-        };
-      } catch (err) {
-        console.warn('⚠️ Failed to get quoted message:', err.message);
-      }
+  client.on('disconnected', async (reason) => {
+    console.warn('⚠️ Disconnected:', reason);
+    if (!isReconnecting) {
+      isReconnecting = true;
+      client.destroy();
+      sessionData = null;
+      console.log('♻️ Reinitializing client in 10 seconds...');
+      setTimeout(() => {
+        client = createWhatsAppClient();
+        setupClientEvents(client);
+        client.initialize();
+        isReconnecting = false;
+      }, 10000);
     }
+  });
 
-    console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text} | [messageId]: ${messageId}`);
+  client.on('ready', () => {
+    console.log('✅ WhatsApp Bot is ready!');
+  });
 
-    // ✅ Store in Supabase
-    const { error: supabaseError } = await supabase.from('messages').insert([
-      {
-        group_id: groupId,
-        sender_id: senderId,
+  client.on('message', async (msg) => {
+    if (!msg.from.endsWith('@g.us')) return;
+
+    try {
+      const groupId = msg.from;
+      const senderId = msg.author || msg.from;
+      const text = msg.body;
+      const messageId = msg.id.id;
+
+      let replyInfo = null;
+      try {
+        if (typeof msg.hasQuotedMsg === 'function' && await msg.hasQuotedMsg()) {
+          const quoted = await msg.getQuotedMessage();
+          replyInfo = {
+            message_id: quoted?.id?.id || '',
+            text: quoted?.body || ''
+          };
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not extract quoted message:', err.message);
+      }
+
+      console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text} | [messageId]: ${messageId}`);
+
+      const { error } = await supabase.from('messages').insert([
+        {
+          group_id: groupId,
+          sender_id: senderId,
+          text,
+          timestamp: new Date()
+        }
+      ]);
+      if (error) console.error('❌ Supabase insert error:', error.message);
+
+      await axios.post('https://kqm.app.n8n.cloud/webhook/28503625-b022-485b-af09-06cf4fd76802', {
+        groupId,
+        senderId,
         text,
-        timestamp: new Date(),
-      },
-    ]);
+        messageId,
+        reply_to_message: replyInfo
+      }).catch(err => {
+        console.error('❌ Failed to send to n8n:', err.message);
+      });
 
-    if (supabaseError) console.error('❌ Supabase insert error:', supabaseError);
+    } catch (err) {
+      console.error('❌ Error handling message:', err.message);
+    }
+  });
+}
 
-    // ✅ Forward to n8n
-    await axios.post('https://kqm.app.n8n.cloud/webhook/28503625-b022-485b-af09-06cf4fd76802', {
-      groupId,
-      senderId,
-      text,
-      messageId,
-      reply_to_message: replyInfo,
-    }).catch(err => {
-      console.error('❌ Failed to send to n8n:', err.message);
-    });
-
-  } catch (err) {
-    console.error('❌ Error handling message:', err.message);
-  }
-});
-
-// ✅ Endpoint to send a message to group
+// ✅ Setup Express routes
 app.post('/send-message', async (req, res) => {
   const { groupId, message } = req.body;
 
@@ -150,16 +167,16 @@ app.post('/send-message', async (req, res) => {
   }
 });
 
-// ✅ Health check route
-app.get('/', (req, res) => {
-  res.send('✅ Bot is alive');
-});
+app.get('/', (_, res) => res.send('✅ Bot is alive'));
 
-// ✅ Start server
+// ✅ Start Express
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Bot is listening on http://localhost:${PORT}`);
+  console.log(`🚀 Server is listening on http://localhost:${PORT}`);
 });
 
-// ✅ Start WhatsApp after loading session
-loadSession().then(() => client.initialize());
+// ✅ Load and Initialize
+loadSession().then(() => {
+  setupClientEvents(client);
+  client.initialize();
+});
