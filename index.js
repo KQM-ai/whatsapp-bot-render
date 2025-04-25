@@ -68,6 +68,17 @@ client.on('message', async (msg) => {
   const groupId = msg.from;
   const senderId = msg.author || msg.from;
   const text = msg.body;
+  const messageId = msg.id.id;
+
+  // 🧠 Detect if the message is a reply
+  let replyInfo = null;
+  if (await msg.hasQuotedMsg()) {
+    const quoted = await msg.getQuotedMessage();
+    replyInfo = {
+      message_id: quoted.id.id,
+      text: quoted.body
+    };
+  }
 
   console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text}`);
 
@@ -81,17 +92,18 @@ client.on('message', async (msg) => {
     groupId,
     senderId,
     text,
-    messageId: msg.id.id
+    messageId,
+    reply_to_message: replyInfo
   });
 });
 
 app.post('/send-message', async (req, res) => {
   const { groupId, message } = req.body;
 
-  try {
+ try {
     const chat = await client.getChatById(groupId);
-    await chat.sendMessage(message);
-    res.send({ success: true });
+    const sent = await chat.sendMessage(message);
+    res.send({ success: true, messageId: sent.id.id });
   } catch (err) {
     console.error('❌ Failed to send:', err.message);
     res.status(500).send({ error: err.message });
