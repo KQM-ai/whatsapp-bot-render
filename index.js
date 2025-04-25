@@ -137,7 +137,7 @@ function setupClientEvents(client) {
       ]);
       if (error) console.error('❌ Supabase insert error:', error.message);
 
-      await axios.post('https://kqm.app.n8n.cloud/webhook/28503625-b022-485b-af09-06cf4fd76802', {
+      await axios.post('https://kqmdigital.app.n8n.cloud/webhook-test/28503625-b022-485b-af09-06cf4fd76802', {
         groupId,
         senderId,
         text,
@@ -167,16 +167,17 @@ app.post('/send-message', async (req, res) => {
   }
 });
 
-app.get('/', (_, res) => res.send('✅ Bot is alive'));
-
-// ✅ Start Express
 const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server is listening on http://localhost:${PORT}`);
+
+// ✅ Health check route first
+app.get('/', (req, res) => {
+  res.send('✅ Bot is alive');
 });
 
-// ✅ Load and Initialize
-loadSession().then(() => {
-  setupClientEvents(client);
-  client.initialize();
+// ✅ Start the Express server
+app.listen(PORT, () => {
+  console.log(`🚀 Bot is listening on http://localhost:${PORT}`);
 });
+
+// ✅ Load WhatsApp session and start bot
+loadSession().then(() => client.initialize());
