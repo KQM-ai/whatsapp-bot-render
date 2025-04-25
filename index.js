@@ -87,8 +87,13 @@ function setupClientEvents(client) {
     console.warn('⚠️ Disconnected:', reason);
     if (!isReconnecting) {
       isReconnecting = true;
-      client.destroy();
-      sessionData = null;
+      
+try {
+  await client.destroy();
+} catch (e) {
+  console.warn('⚠️ Failed to destroy client:', e.message);
+}
+      
       console.log('♻️ Reinitializing client in 10 seconds...');
       setTimeout(() => {
         client = createWhatsAppClient();
