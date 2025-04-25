@@ -80,7 +80,7 @@ client.on('message', async (msg) => {
     };
   }
 
-  console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text}`);
+  console.log(`[Group]: ${groupId} | [Sender]: ${senderId} | [Text]: ${text} | [messageId]: ${messageId}`);
 
   // ✅ Store message to Supabase
   await supabase.from('messages').insert([
