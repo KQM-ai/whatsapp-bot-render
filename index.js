@@ -80,7 +80,8 @@ client.on('message', async (msg) => {
   await axios.post('https://kqm.app.n8n.cloud/webhook/28503625-b022-485b-af09-06cf4fd76802', {
     groupId,
     senderId,
-    text
+    text,
+    messageId: msg.id.id
   });
 });
 
