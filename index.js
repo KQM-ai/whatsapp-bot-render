@@ -102,5 +102,8 @@ app.listen(PORT, () => {
   console.log(`🚀 Bot is listening on http://localhost:${PORT}`);
 });
 
+app.get('/', (req, res) => {
+  res.send('✅ Bot is alive');
+});
 // ✅ Load session before initializing client
 loadSession().then(() => client.initialize());
