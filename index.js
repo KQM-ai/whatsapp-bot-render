@@ -72,7 +72,7 @@ client.on('message', async (msg) => {
 
   // 🧠 Detect if the message is a reply
   let replyInfo = null;
-  if (await msg.hasQuotedMsg()) {
+  if (typeof msg.hasQuotedMsg === 'function' && await msg.hasQuotedMsg()) {
     const quoted = await msg.getQuotedMessage();
     replyInfo = {
       message_id: quoted.id.id,
