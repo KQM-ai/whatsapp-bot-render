@@ -19,7 +19,7 @@ let isReconnecting = false;
 // ✅ Load session from Supabase
 async function loadSession() {
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('whatsapp_sessions')
       .select('session_data')
       .order('created_at', { ascending: false })
@@ -30,7 +30,7 @@ async function loadSession() {
       sessionData = data.session_data;
       console.log('✅ Loaded session from Supabase');
     } else {
-      console.warn('⚠️ No session found, starting fresh.');
+      console.warn('⚠️ No session data found, will start fresh.');
     }
   } catch (err) {
     console.error('❌ Error loading session:', err.message);
@@ -41,9 +41,12 @@ async function loadSession() {
 async function saveSession(session) {
   try {
     const { error } = await supabase.from('whatsapp_sessions').insert([
-      { session_key: 'default', session_data: session }
+      {
+        session_key: 'default',
+        session_data: session,
+      },
     ]);
-    if (error) console.error('❌ Supabase save error:', error.message);
+    if (error) console.error('❌ Failed to save session:', error);
     else console.log('💾 Session saved to Supabase');
   } catch (err) {
     console.error('❌ Save session error:', err.message);
