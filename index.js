@@ -10,13 +10,13 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvd2ViYmRraWJpYmN2cmdxdnF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzODUxMzQsImV4cCI6MjA2MDk2MTEzNH0.GZYTU_j86IGBZFNWeSZvHHiG9Ki4ybkyY7ut9Jz800E'
 );
 
-
 const app = express();
 app.use(express.json());
 
 let sessionData = null;
 let isReconnecting = false;
 let client = null;
+let startupTime = Date.now();
 
 // ✅ Protection against unexpected crashes
 process.on('unhandledRejection', (reason) => console.error('🚨 Unhandled Rejection:', reason));
@@ -37,9 +37,14 @@ async function loadSession() {
   }
 }
 
-// ✅ Save Session
+// ✅ Save Session (with Validation!)
 async function saveSession(session, attempt = 0) {
   try {
+    if (!session || typeof session !== 'object' || Array.isArray(session)) {
+      console.warn('⚠️ Invalid session object. Skipping save.');
+      return;
+    }
+
     const { error } = await supabase
       .from('whatsapp_sessions')
       .upsert([{ session_key: 'default', session_data: session }], { onConflict: ['session_key'] });
@@ -48,7 +53,7 @@ async function saveSession(session, attempt = 0) {
       console.error(`❌ Save session error (attempt ${attempt}):`, error.message);
       if (attempt < 2) await saveSession(session, attempt + 1);
     } else {
-      console.log('💾 Session saved.');
+      console.log('💾 Session saved successfully.');
     }
   } catch (err) {
     console.error('❌ Save session crash:', err.message);
@@ -71,7 +76,7 @@ function setupClientEvents(c) {
   });
 
   c.on('authenticated', (session) => {
-    console.log('🔐 Authenticated');
+    console.log('🔐 Authenticated.');
     saveSession(session);
   });
 
@@ -80,7 +85,7 @@ function setupClientEvents(c) {
   });
 
   c.on('ready', () => {
-    console.log('✅ WhatsApp Bot Ready');
+    console.log('✅ WhatsApp Bot Ready.');
   });
 
   c.on('disconnected', async (reason) => {
@@ -92,7 +97,7 @@ function setupClientEvents(c) {
       } catch (err) {
         console.warn('⚠️ Destroy client error:', err.message);
       }
-      console.log('♻️ Restarting client in 10s...');
+      console.log('♻️ Restarting client in 10 seconds...');
       setTimeout(startClient, 10000);
     }
   });
@@ -111,11 +116,9 @@ async function handleIncomingMessage(msg) {
     const messageId = msg?.id?.id?.toString?.() || '';
 
     let replyInfo = null;
-    let hasReply = false;
     try {
       const quoted = await msg.getQuotedMessage?.();
       if (quoted?.id?.id) {
-        hasReply = true;
         replyInfo = { message_id: quoted.id.id, text: quoted.body || '' };
       }
     } catch (e) {
@@ -123,7 +126,7 @@ async function handleIncomingMessage(msg) {
     }
 
     const isImportant = text.toLowerCase().includes('valuation') ||
-      (hasReply && replyInfo?.text?.toLowerCase().includes('valuation'));
+      (replyInfo && replyInfo.text.toLowerCase().includes('valuation'));
 
     if (!isImportant) {
       console.log('🚫 Non-valuation message ignored.');
@@ -171,7 +174,6 @@ async function sendToN8nWebhook(payload, attempt = 0) {
 // ✅ Start Client
 async function startClient() {
   try {
-    
     await loadSession();
     client = createWhatsAppClient();
     setupClientEvents(client);
@@ -179,7 +181,7 @@ async function startClient() {
     console.log('🚀 WhatsApp client initialized.');
   } catch (err) {
     console.error('❌ Client start error:', err.message);
-    setTimeout(startClient, 15000); // retry if crash
+    setTimeout(startClient, 15000); // retry after 15s if crash
   }
 }
 
@@ -203,8 +205,6 @@ app.post('/send-message', async (req, res) => {
 app.get('/', (_, res) => res.send('✅ Bot is alive'));
 
 // ✅ Restart API (Triggered by UptimeRobot)
-let startupTime = Date.now(); // Track when app started
-
 app.get('/restart', async (_, res) => {
   const now = Date.now();
   const secondsSinceStart = (now - startupTime) / 1000;
@@ -227,7 +227,6 @@ app.get('/restart', async (_, res) => {
   await client.initialize();
   res.send('♻️ Bot Restarted Successfully');
 });
-
 
 // ✅ Server
 const PORT = process.env.PORT || 3000;
