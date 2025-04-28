@@ -75,17 +75,12 @@ function setupClientEvents(c) {
     console.log('📱 Scan QR: https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr));
   });
 
-  c.on('authenticated', async () => {
+  c.on('authenticated', (session) => {
   console.log('🔐 Authenticated.');
-  try {
-    const currentSession = await client.getSession();
-    if (currentSession) {
-      await saveSession(currentSession);
-    } else {
-      console.warn('⚠️ client.getSession() returned null or invalid.');
-    }
-  } catch (err) {
-    console.error('❌ Error fetching session:', err.message);
+  if (session && session.WABrowserId) {
+    saveSession(session);
+  } else {
+    console.warn('⚠️ Invalid session object. Skipping save.');
   }
 });
 
