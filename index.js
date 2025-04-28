@@ -213,7 +213,7 @@ app.get('/restart', async (_, res) => {
   const now = Date.now();
   const secondsSinceStart = (now - startupTime) / 1000;
 
-  if (secondsSinceStart < 60) {
+  if (secondsSinceStart < 120) {
     console.warn('⚠️ Restart blocked: too soon after startup.');
     return res.status(429).send('Too early to restart after deploy.');
   }
