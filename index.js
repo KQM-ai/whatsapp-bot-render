@@ -199,6 +199,21 @@ app.post('/send-message', async (req, res) => {
 
 app.get('/', (_, res) => res.send('✅ Bot is alive'));
 
+// ✅ Restart API (Triggered by UptimeRobot)
+app.get('/restart', async (_, res) => {
+  console.log('♻️ Manual Restart Triggered via /restart');
+  try {
+    await client.destroy();
+  } catch (e) {
+    console.warn('⚠️ Destroy client failed during restart:', e.message);
+  }
+  client = createWhatsAppClient();
+  setupClientEvents(client);
+  await client.initialize();
+  res.send('♻️ Bot Restarted Successfully');
+});
+
+
 // ✅ Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
