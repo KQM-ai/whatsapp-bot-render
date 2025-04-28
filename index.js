@@ -4,6 +4,7 @@ const express = require('express');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
+// ✅ Setup Supabase Client
 const supabase = createClient(
   'https://vowebbdkibibcvrgqvqy.supabase.co',
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvd2ViYmRraWJpYmN2cmdxdnF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzODUxMzQsImV4cCI6MjA2MDk2MTEzNH0.GZYTU_j86IGBZFNWeSZvHHiG9Ki4ybkyY7ut9Jz800E'
@@ -12,15 +13,25 @@ const supabase = createClient(
 const app = express();
 app.use(express.json());
 
-let sessionData = null, isReconnecting = false, client = null, startupTime = Date.now();
+let sessionData = null, isReconnecting = false, client = null, startupTime = Date.now(), authenticatedTime = null;
 
+// ✅ Protection against unexpected crashes
 process.on('unhandledRejection', reason => console.error('🚨 Unhandled Rejection:', reason));
 process.on('uncaughtException', err => console.error('🚨 Uncaught Exception:', err));
 
-// ✅ Load session from Supabase
+// ✅ Mark Authenticated
+function markAuthenticated() {
+  authenticatedTime = Date.now();
+}
+
+// ✅ Load Session
 async function loadSession() {
   try {
-    const { data } = await supabase.from('whatsapp_sessions').select('session_data').order('created_at', { ascending: false }).limit(1).single();
+    const { data } = await supabase.from('whatsapp_sessions')
+      .select('session_data')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
     sessionData = data?.session_data || null;
     console.log(sessionData ? '✅ Session loaded.' : '⚠️ No session found.');
   } catch (err) {
@@ -28,14 +39,16 @@ async function loadSession() {
   }
 }
 
-// ✅ Save session to Supabase
+// ✅ Save Session
 async function saveSession(session, attempt = 0) {
   try {
     if (!session || typeof session !== 'object' || Array.isArray(session)) {
       console.warn('⚠️ Invalid session object. Skipping save.');
       return;
     }
-    const { error } = await supabase.from('whatsapp_sessions').upsert([{ session_key: 'default', session_data: session }], { onConflict: ['session_key'] });
+    const { error } = await supabase
+      .from('whatsapp_sessions')
+      .upsert([{ session_key: 'default', session_data: session }], { onConflict: ['session_key'] });
     if (error) {
       console.error(`❌ Save session error (attempt ${attempt}):`, error.message);
       if (attempt < 2) await saveSession(session, attempt + 1);
@@ -49,16 +62,16 @@ async function saveSession(session, attempt = 0) {
 
 // ✅ Create WhatsApp Client
 function createWhatsAppClient() {
-  return new Client({ puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }, session: sessionData, ignoreSelfMessages: false });
+  return new Client({
+    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] },
+    session: sessionData,
+    ignoreSelfMessages: false
+  });
 }
 
 // ✅ Setup WhatsApp Events
 function setupClientEvents(c) {
-  let firstReady = false;
-
-  c.on('qr', (qr) => {
-    console.log('📱 Scan QR:', 'https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr));
-  });
+  c.on('qr', qr => console.log('📱 Scan QR:', 'https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr)));
 
   c.on('authenticated', async (session) => {
     console.log('🔐 Authenticated.');
@@ -68,19 +81,15 @@ function setupClientEvents(c) {
     } else {
       console.warn('⚠️ Empty session received.');
     }
+    markAuthenticated();
   });
 
   c.on('ready', () => {
     console.log('✅ WhatsApp Bot Ready.');
-    firstReady = true;
   });
 
   c.on('disconnected', async reason => {
     console.warn('⚠️ Disconnected:', reason);
-    if (!firstReady) {
-      console.warn('🛑 Early disconnect ignored (before ready).');
-      return;
-    }
     if (!isReconnecting) {
       isReconnecting = true;
       try { await client.destroy(); } catch (err) { console.warn('⚠️ Destroy client error:', err.message); }
@@ -92,7 +101,7 @@ function setupClientEvents(c) {
   c.on('message', handleIncomingMessage);
 }
 
-// ✅ Handle incoming WhatsApp message
+// ✅ Handle Incoming WhatsApp Message
 async function handleIncomingMessage(msg) {
   if (!msg.from.endsWith('@g.us')) return;
   try {
@@ -154,6 +163,7 @@ async function startClient() {
   }
 }
 
+// ✅ Express Routes
 app.post('/send-message', async (req, res) => {
   if (!client?.info?.wid) {
     console.warn('⚠️ WhatsApp not ready.');
@@ -172,12 +182,21 @@ app.post('/send-message', async (req, res) => {
 
 app.get('/', (_, res) => res.send('✅ Bot is alive'));
 
+// ✅ Restart API (Prevent too early restart)
 app.get('/restart', async (_, res) => {
-  const now = Date.now(), secondsSinceStart = (now - startupTime) / 1000;
-  if (secondsSinceStart < 120) {
+  const now = Date.now();
+  const secondsSinceStart = (now - startupTime) / 1000;
+  const secondsSinceAuth = authenticatedTime ? (now - authenticatedTime) / 1000 : 0;
+
+  if (secondsSinceStart < 180) {
     console.warn('⚠️ Restart blocked: too soon after startup.');
     return res.status(429).send('Too early to restart after deploy.');
   }
+  if (!authenticatedTime || secondsSinceAuth < 180) {
+    console.warn('⚠️ Restart blocked: not long enough after authentication.');
+    return res.status(429).send('Too early to restart after authentication.');
+  }
+
   console.log('♻️ Manual Restart Triggered via /restart');
   try { if (client) await client.destroy().catch(e => console.warn('⚠️ Destroy during restart warning:', e.message)); } catch (e) {}
   client = createWhatsAppClient();
@@ -186,12 +205,14 @@ app.get('/restart', async (_, res) => {
   res.send('♻️ Bot Restarted Successfully');
 });
 
+// ✅ Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Listening on http://localhost:${PORT}`));
 
+// ✅ Start everything
 startClient();
 
-// ✅ Scheduled Auto Refresh every 6 hours
+// ✅ Scheduled Auto Refresh Every 6 Hours
 setInterval(async () => {
   console.log('♻️ Scheduled client refresh.');
   try { if (client) await client.destroy().catch(err => console.warn('⚠️ Scheduled destroy warning:', err.message)); } catch (err) {}
