@@ -10,49 +10,39 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvd2ViYmRraWJpYmN2cmdxdnF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzODUxMzQsImV4cCI6MjA2MDk2MTEzNH0.GZYTU_j86IGBZFNWeSZvHHiG9Ki4ybkyY7ut9Jz800E'
 );
 
+
 const app = express();
 app.use(express.json());
 
 let sessionData = null;
 let isReconnecting = false;
+let client = null;
 
-// ✅ Global Protection
-process.on('unhandledRejection', (reason) => {
-  console.error('🚨 Unhandled Rejection:', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('🚨 Uncaught Exception:', err);
-});
+// ✅ Protection against unexpected crashes
+process.on('unhandledRejection', (reason) => console.error('🚨 Unhandled Rejection:', reason));
+process.on('uncaughtException', (err) => console.error('🚨 Uncaught Exception:', err));
 
-// ✅ Load session from Supabase
+// ✅ Load Session
 async function loadSession() {
   try {
-    const { data } = await supabase
-      .from('whatsapp_sessions')
+    const { data } = await supabase.from('whatsapp_sessions')
       .select('session_data')
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
-
-    if (data?.session_data) {
-      sessionData = data.session_data;
-      console.log('✅ Loaded session from Supabase');
-    } else {
-      console.warn('⚠️ No session found, starting fresh.');
-    }
+    sessionData = data?.session_data || null;
+    console.log(sessionData ? '✅ Session loaded.' : '⚠️ No session found.');
   } catch (err) {
-    console.error('❌ Failed loading session:', err.message);
+    console.error('❌ Load session error:', err.message);
   }
 }
 
-// ✅ Save session with retry
+// ✅ Save Session
 async function saveSession(session, attempt = 0) {
   try {
-    const { error } = await supabase.from('whatsapp_sessions').insert([
-      { session_key: 'default', session_data: session },
-    ]);
+    const { error } = await supabase.from('whatsapp_sessions').insert([{ session_key: 'default', session_data: session }]);
     if (error) {
-      console.error(`❌ Supabase save error (attempt ${attempt}):`, error.message);
+      console.error(`❌ Save session error (attempt ${attempt}):`, error.message);
       if (attempt < 2) await saveSession(session, attempt + 1);
     } else {
       console.log('💾 Session saved.');
@@ -66,146 +56,165 @@ async function saveSession(session, attempt = 0) {
 function createWhatsAppClient() {
   return new Client({
     puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] },
-    ignoreSelfMessages: false,
     session: sessionData,
+    ignoreSelfMessages: false,
   });
 }
 
-let client = createWhatsAppClient();
-
-// ✅ Setup Client Events
-function setupClientEvents(client) {
-  client.on('qr', (qr) => {
-    console.log('📱 Scan QR:');
-    console.log('🔗 https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr));
+// ✅ Setup WhatsApp Events
+function setupClientEvents(c) {
+  c.on('qr', (qr) => {
+    console.log('📱 Scan QR: https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr));
   });
 
-  client.on('authenticated', (session) => {
+  c.on('authenticated', (session) => {
     console.log('🔐 Authenticated');
     saveSession(session);
   });
 
-  client.on('auth_failure', (msg) => {
-    console.error('❌ Auth Failure:', msg);
+  c.on('auth_failure', (msg) => {
+    console.error('❌ Authentication failed:', msg);
   });
 
-  client.on('disconnected', async (reason) => {
+  c.on('ready', () => {
+    console.log('✅ WhatsApp Bot Ready');
+  });
+
+  c.on('disconnected', async (reason) => {
     console.warn('⚠️ Disconnected:', reason);
     if (!isReconnecting) {
       isReconnecting = true;
       try {
         await client.destroy();
-      } catch (e) {
-        console.warn('⚠️ Destroy client failed:', e.message);
+      } catch (err) {
+        console.warn('⚠️ Destroy client error:', err.message);
       }
       console.log('♻️ Restarting client in 10s...');
-      setTimeout(() => {
-        client = createWhatsAppClient();
-        setupClientEvents(client);
-        client.initialize();
-        isReconnecting = false;
-      }, 10000);
+      setTimeout(startClient, 10000);
     }
   });
 
-  client.on('ready', () => {
-    console.log('✅ WhatsApp Bot Ready');
-  });
-
-  client.on('message', async (msg) => {
-    if (!msg.from.endsWith('@g.us')) return;
-
-    try {
-      const groupId = msg.from;
-      const senderId = msg.author || msg.from;
-      const text = msg.body || '';
-      const messageId = msg?.id?.id?.toString?.() || '';
-
-      let replyInfo = null;
-      let hasReply = false;
-
-      try {
-        const quoted = await msg.getQuotedMessage?.();
-        if (quoted?.id?.id) {
-          hasReply = true;
-          replyInfo = { message_id: quoted.id.id, text: quoted.body || '' };
-        }
-      } catch (e) {
-        console.warn('⚠️ Quoted message error:', e.message);
-      }
-
-      const isImportant = text.toLowerCase().includes('valuation') ||
-        (hasReply && replyInfo?.text?.toLowerCase().includes('valuation'));
-
-      if (!isImportant) {
-        console.log('🚫 Ignored non-valuation message.');
-        return;
-      }
-
-      console.log(`[📩 Group]: ${groupId} | [👤 Sender]: ${senderId} | [📝 Text]: ${text} | [🆔]: ${messageId}`);
-
-      // ✅ Save message to Supabase (with retry)
-      await insertMessageSupabase(groupId, senderId, text);
-
-      // ✅ Send to n8n webhook (with retry)
-      await sendToN8nWebhook({ groupId, senderId, text, messageId, reply_to_message: replyInfo });
-
-    } catch (err) {
-      console.error('❌ Message handling failed:', err.message);
-    }
-  });
+  c.on('message', handleIncomingMessage);
 }
 
-// ✅ Insert message to Supabase (with retry)
+// ✅ Handle incoming WhatsApp message
+async function handleIncomingMessage(msg) {
+  if (!msg.from.endsWith('@g.us')) return;
+
+  try {
+    const groupId = msg.from;
+    const senderId = msg.author || msg.from;
+    const text = msg.body || '';
+    const messageId = msg?.id?.id?.toString?.() || '';
+
+    let replyInfo = null;
+    let hasReply = false;
+    try {
+      const quoted = await msg.getQuotedMessage?.();
+      if (quoted?.id?.id) {
+        hasReply = true;
+        replyInfo = { message_id: quoted.id.id, text: quoted.body || '' };
+      }
+    } catch (e) {
+      console.warn('⚠️ Quoted message error:', e.message);
+    }
+
+    const isImportant = text.toLowerCase().includes('valuation') ||
+      (hasReply && replyInfo?.text?.toLowerCase().includes('valuation'));
+
+    if (!isImportant) {
+      console.log('🚫 Non-valuation message ignored.');
+      return;
+    }
+
+    console.log(`[📩 Group]: ${groupId} | [👤 Sender]: ${senderId} | [📝 Text]: ${text} | [🆔]: ${messageId}`);
+
+    await insertMessageSupabase(groupId, senderId, text);
+    await sendToN8nWebhook({ groupId, senderId, text, messageId, reply_to_message: replyInfo });
+
+  } catch (err) {
+    console.error('❌ Message handler error:', err.message);
+  }
+}
+
+// ✅ Insert Message to Supabase
 async function insertMessageSupabase(groupId, senderId, text, attempt = 0) {
   try {
     const { error } = await supabase.from('messages').insert([
       { group_id: groupId, sender_id: senderId, text, timestamp: new Date() },
     ]);
     if (error) {
-      console.error(`❌ Supabase insert error (attempt ${attempt}):`, error.message);
+      console.error(`❌ Insert error (attempt ${attempt}):`, error.message);
       if (attempt < 2) await insertMessageSupabase(groupId, senderId, text, attempt + 1);
     } else {
-      console.log('✅ Message inserted to Supabase');
+      console.log('✅ Message stored.');
     }
   } catch (err) {
     console.error('❌ Insert crash:', err.message);
   }
 }
 
-// ✅ Send to n8n Webhook (with retry)
+// ✅ Send to n8n Webhook
 async function sendToN8nWebhook(payload, attempt = 0) {
   try {
     await axios.post('https://kqmdigital.app.n8n.cloud/webhook/789280c9-ef0c-4c3a-b584-5b3036e5d799', payload);
-    console.log('✅ Sent to n8n webhook');
+    console.log('✅ Webhook sent.');
   } catch (err) {
-    console.error(`❌ Webhook send error (attempt ${attempt}):`, err.message);
+    console.error(`❌ Webhook error (attempt ${attempt}):`, err.message);
     if (attempt < 2) await sendToN8nWebhook(payload, attempt + 1);
   }
 }
 
-// ✅ Setup Express API
+// ✅ Start Client
+async function startClient() {
+  try {
+    sessionData = null;
+    await loadSession();
+    client = createWhatsAppClient();
+    setupClientEvents(client);
+    await client.initialize();
+    console.log('🚀 WhatsApp client initialized.');
+  } catch (err) {
+    console.error('❌ Client start error:', err.message);
+    setTimeout(startClient, 15000); // retry if crash
+  }
+}
+
+// ✅ Express Routes
 app.post('/send-message', async (req, res) => {
+  if (!client?.info?.wid) {
+    console.warn('⚠️ WhatsApp not ready.');
+    return res.status(503).send({ error: 'WhatsApp not connected' });
+  }
   const { groupId, message } = req.body;
   try {
     const chat = await client.getChatById(groupId);
     const sent = await chat.sendMessage(message);
     res.send({ success: true, messageId: sent.id.id });
   } catch (err) {
-    console.error('❌ Send message error:', err.message);
+    console.error('❌ Send message failed:', err.message);
     res.status(500).send({ error: err.message });
   }
 });
 
-app.get('/', (_, res) => res.send('✅ Bot alive'));
+app.get('/', (_, res) => res.send('✅ Bot is alive'));
 
-const PORT = 3000;
+// ✅ Server
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Listening on http://localhost:${PORT}`);
 });
 
-// ✅ Initialize WhatsApp Bot
-loadSession().then(() => {
-  setupClientEvents(client);
-  client.initialize();
-});
+// ✅ Start everything
+startClient();
+
+// ✅ Scheduled Auto Refresh Every 6 Hours
+setInterval(async () => {
+  console.log('♻️ Scheduled client refresh.');
+  try {
+    await client.destroy();
+  } catch (err) {
+    console.warn('⚠️ Destroy during refresh error:', err.message);
+  }
+  startClient();
+}, 21600 * 1000); // 6h
