@@ -206,9 +206,11 @@ app.get('/', (_, res) => res.send('✅ Bot is alive'));
 app.get('/restart', async (_, res) => {
   console.log('♻️ Manual Restart Triggered via /restart');
   try {
-    await client.destroy();
+    if (client) {
+      await client.destroy().catch(e => console.warn('⚠️ Destroy during restart warning:', e.message));
+    }
   } catch (e) {
-    console.warn('⚠️ Destroy client failed during restart:', e.message);
+    console.warn('⚠️ Restart destroy error:', e.message);
   }
   client = createWhatsAppClient();
   setupClientEvents(client);
@@ -230,9 +232,11 @@ startClient();
 setInterval(async () => {
   console.log('♻️ Scheduled client refresh.');
   try {
-    await client.destroy();
+    if (client) {
+      await client.destroy().catch(err => console.warn('⚠️ Scheduled destroy warning:', err.message));
+    }
   } catch (err) {
-    console.warn('⚠️ Destroy during refresh error:', err.message);
+    console.warn('⚠️ Scheduled destroy catch error:', err.message);
   }
   startClient();
 }, 21600 * 1000); // 6h
