@@ -40,7 +40,10 @@ async function loadSession() {
 // ✅ Save Session
 async function saveSession(session, attempt = 0) {
   try {
-    const { error } = await supabase.from('whatsapp_sessions').insert([{ session_key: 'default', session_data: session }]);
+    const { error } = await supabase
+      .from('whatsapp_sessions')
+      .upsert([{ session_key: 'default', session_data: session }], { onConflict: ['session_key'] });
+
     if (error) {
       console.error(`❌ Save session error (attempt ${attempt}):`, error.message);
       if (attempt < 2) await saveSession(session, attempt + 1);
