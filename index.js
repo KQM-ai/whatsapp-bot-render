@@ -52,19 +52,26 @@ function createWhatsAppClient() {
 function setupClientEvents(c) {
   c.on('qr', qr => console.log('📱 Scan QR:', 'https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr)));
   
-  c.on('authenticated', async () => {
-    console.log('🔐 Authenticated.');
-    try {
-      const rawSession = await c.pupPage?.evaluate(() => window.localStorage.getItem('wweb-session'));
-      if (rawSession) {
-        await saveSession(JSON.parse(rawSession));
-      } else {
-        console.warn('⚠️ No session data in browser.');
-      }
-    } catch (err) {
-      console.error('❌ Fetch session error:', err.message);
+  c.on('authenticated', () => {
+  console.log('🔐 Authenticated.');
+  // No session save here yet!
+});
+
+c.on('ready', async () => {
+  console.log('✅ WhatsApp Bot Ready. Fetching session...');
+  try {
+    const rawSession = await client.pupPage.evaluate(() => window.localStorage.getItem('wweb-session'));
+    if (rawSession) {
+      await saveSession(JSON.parse(rawSession));
+      console.log('💾 Session successfully saved after ready.');
+    } else {
+      console.warn('⚠️ No session data in browser.');
     }
-  });
+  } catch (err) {
+    console.error('❌ Fetch session error after ready:', err.message);
+  }
+});
+
 
   c.on('auth_failure', msg => console.error('❌ Authentication failed:', msg));
   c.on('ready', () => console.log('✅ WhatsApp Bot Ready.'));
