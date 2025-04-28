@@ -203,7 +203,17 @@ app.post('/send-message', async (req, res) => {
 app.get('/', (_, res) => res.send('✅ Bot is alive'));
 
 // ✅ Restart API (Triggered by UptimeRobot)
+let startupTime = Date.now(); // Track when app started
+
 app.get('/restart', async (_, res) => {
+  const now = Date.now();
+  const secondsSinceStart = (now - startupTime) / 1000;
+
+  if (secondsSinceStart < 60) {
+    console.warn('⚠️ Restart blocked: too soon after startup.');
+    return res.status(429).send('Too early to restart after deploy.');
+  }
+
   console.log('♻️ Manual Restart Triggered via /restart');
   try {
     if (client) {
