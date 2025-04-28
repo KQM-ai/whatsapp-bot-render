@@ -17,6 +17,7 @@ let sessionData = null, isReconnecting = false, client = null, startupTime = Dat
 process.on('unhandledRejection', reason => console.error('🚨 Unhandled Rejection:', reason));
 process.on('uncaughtException', err => console.error('🚨 Uncaught Exception:', err));
 
+// ✅ Load session from Supabase
 async function loadSession() {
   try {
     const { data } = await supabase.from('whatsapp_sessions').select('session_data').order('created_at', { ascending: false }).limit(1).single();
@@ -27,6 +28,7 @@ async function loadSession() {
   }
 }
 
+// ✅ Save session to Supabase
 async function saveSession(session, attempt = 0) {
   try {
     if (!session || typeof session !== 'object' || Array.isArray(session)) {
@@ -45,39 +47,40 @@ async function saveSession(session, attempt = 0) {
   }
 }
 
+// ✅ Create WhatsApp Client
 function createWhatsAppClient() {
   return new Client({ puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }, session: sessionData, ignoreSelfMessages: false });
 }
 
+// ✅ Setup WhatsApp Events
 function setupClientEvents(c) {
-  c.on('qr', qr => console.log('📱 Scan QR:', 'https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr)));
-  
-  c.on('authenticated', () => {
-  console.log('🔐 Authenticated.');
-  // No session save here yet!
-});
+  let firstReady = false;
 
-c.on('ready', async () => {
-  console.log('✅ WhatsApp Bot Ready. Fetching session...');
-  try {
-    const rawSession = await client.pupPage.evaluate(() => window.localStorage.getItem('wweb-session'));
-    if (rawSession) {
-      await saveSession(JSON.parse(rawSession));
-      console.log('💾 Session successfully saved after ready.');
+  c.on('qr', (qr) => {
+    console.log('📱 Scan QR:', 'https://api.qrserver.com/v1/create-qr-code/?data=' + encodeURIComponent(qr));
+  });
+
+  c.on('authenticated', async (session) => {
+    console.log('🔐 Authenticated.');
+    if (session && session.WABrowserId) {
+      await saveSession(session);
+      console.log('💾 Session saved.');
     } else {
-      console.warn('⚠️ No session data in browser.');
+      console.warn('⚠️ Empty session received.');
     }
-  } catch (err) {
-    console.error('❌ Fetch session error after ready:', err.message);
-  }
-});
+  });
 
+  c.on('ready', () => {
+    console.log('✅ WhatsApp Bot Ready.');
+    firstReady = true;
+  });
 
-  c.on('auth_failure', msg => console.error('❌ Authentication failed:', msg));
-  c.on('ready', () => console.log('✅ WhatsApp Bot Ready.'));
-  
   c.on('disconnected', async reason => {
     console.warn('⚠️ Disconnected:', reason);
+    if (!firstReady) {
+      console.warn('🛑 Early disconnect ignored (before ready).');
+      return;
+    }
     if (!isReconnecting) {
       isReconnecting = true;
       try { await client.destroy(); } catch (err) { console.warn('⚠️ Destroy client error:', err.message); }
@@ -89,6 +92,7 @@ c.on('ready', async () => {
   c.on('message', handleIncomingMessage);
 }
 
+// ✅ Handle incoming WhatsApp message
 async function handleIncomingMessage(msg) {
   if (!msg.from.endsWith('@g.us')) return;
   try {
@@ -110,6 +114,7 @@ async function handleIncomingMessage(msg) {
   }
 }
 
+// ✅ Insert Message to Supabase
 async function insertMessageSupabase(groupId, senderId, text, attempt = 0) {
   try {
     const { error } = await supabase.from('messages').insert([{ group_id: groupId, sender_id: senderId, text, timestamp: new Date() }]);
@@ -124,6 +129,7 @@ async function insertMessageSupabase(groupId, senderId, text, attempt = 0) {
   }
 }
 
+// ✅ Send to n8n Webhook
 async function sendToN8nWebhook(payload, attempt = 0) {
   try {
     await axios.post('https://kqmdigital.app.n8n.cloud/webhook/789280c9-ef0c-4c3a-b584-5b3036e5d799', payload);
@@ -134,6 +140,7 @@ async function sendToN8nWebhook(payload, attempt = 0) {
   }
 }
 
+// ✅ Start Client
 async function startClient() {
   try {
     await loadSession();
@@ -184,8 +191,9 @@ app.listen(PORT, () => console.log(`🚀 Listening on http://localhost:${PORT}`)
 
 startClient();
 
+// ✅ Scheduled Auto Refresh every 6 hours
 setInterval(async () => {
   console.log('♻️ Scheduled client refresh.');
   try { if (client) await client.destroy().catch(err => console.warn('⚠️ Scheduled destroy warning:', err.message)); } catch (err) {}
   startClient();
-}, 21600 * 1000);
+}, 21600 * 1000); // 6h
