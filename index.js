@@ -168,7 +168,7 @@ async function sendToN8nWebhook(payload, attempt = 0) {
 // ✅ Start Client
 async function startClient() {
   try {
-    sessionData = null;
+    
     await loadSession();
     client = createWhatsAppClient();
     setupClientEvents(client);
