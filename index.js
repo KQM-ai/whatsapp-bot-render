@@ -20,8 +20,8 @@ const MAX_RECONNECT_DELAY = 300000; // 5 minutes
 const SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'default_session'; // Identifier for this bot's session in Supabase
 
 // Supabase Credentials (LOAD FROM ENVIRONMENT VARIABLES)
-const SUPABASE_URL = process.env.https://vowebbdkibibcvrgqvqy.supabase.co; // e.g., 'https://xxxx.supabase.co'
-const SUPABASE_ANON_KEY = process.env.eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvd2ViYmRraWJpYmN2cmdxdnF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzODUxMzQsImV4cCI6MjA2MDk2MTEzNH0.GZYTU_j86IGBZFNWeSZvHHiG9Ki4ybkyY7ut9Jz800E; // Public Anon Key
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error("❌ Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables. Exiting.");
