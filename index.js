@@ -6,35 +6,52 @@ const express = require('express');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
+// --- Config ---
 const PORT = process.env.PORT || 3000;
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://kqmdigital.app.n8n.cloud/webhook/789280c9-ef0c-4c3a-b584-5b3036e5d799';
 const SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'default_session';
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
-console.log('🔍 Loaded N8N_WEBHOOK_URL:', process.env.N8N_WEBHOOK_URL);
+console.log('🔍 Loaded N8N_WEBHOOK_URL:', N8N_WEBHOOK_URL);
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('❌ Missing Supabase credentials.');
+  console.error('❌ Missing Supabase credentials. Exiting.');
   process.exit(1);
-}
-if (N8N_WEBHOOK_URL === 'https://kqmdigital.app.n8n.cloud/webhook/789280c9-ef0c-4c3a-b584-5b3036e5d799') {
-  console.warn('⚠️ N8N_WEBHOOK_URL is not set in environment variables. Webhook sending will fail.');
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const log = (level, message, ...args) => {
   const timestamp = new Date().toISOString();
-  const sanitizedArgs = args.map(arg => (typeof arg === 'object' && arg !== null) ? JSON.stringify(arg) : arg);
-  console[level](`[${timestamp}] [${level.toUpperCase()}] [${SESSION_ID}] ${message}`, ...sanitizedArgs);
+  const formatted = `[${timestamp}] [${level.toUpperCase()}] [${SESSION_ID}] ${message}`;
+  console[level](formatted, ...args);
 };
 
+// --- Supabase Store for WhatsApp Session ---
 class SupabaseStore {
   constructor(supabaseClient, sessionId) {
     this.supabase = supabaseClient;
     this.sessionId = sessionId;
     log('info', `SupabaseStore initialized for session ID: ${this.sessionId}`);
+  }
+
+  async sessionExists({ session }) {
+    try {
+      const { count, error } = await this.supabase
+        .from('whatsapp_sessions')
+        .select('*', { count: 'exact', head: true })
+        .eq('session_key', session);
+
+      if (error) {
+        log('error', `Supabase error in sessionExists: ${error.message}`);
+        return false;
+      }
+      return count > 0;
+    } catch (err) {
+      log('error', `Exception in sessionExists: ${err.message}`);
+      return false;
+    }
   }
 
   async extract() {
@@ -44,6 +61,7 @@ class SupabaseStore {
       .eq('session_key', this.sessionId)
       .limit(1)
       .single();
+
     if (error) return null;
     return data?.session_data || null;
   }
@@ -52,6 +70,7 @@ class SupabaseStore {
     const { error } = await this.supabase
       .from('whatsapp_sessions')
       .upsert({ session_key: this.sessionId, session_data: sessionData }, { onConflict: 'session_key' });
+
     if (error) log('error', `Failed to save session: ${error.message}`);
   }
 
@@ -60,12 +79,12 @@ class SupabaseStore {
       .from('whatsapp_sessions')
       .delete()
       .eq('session_key', this.sessionId);
+
     if (error) log('error', `Failed to delete session: ${error.message}`);
   }
 }
 
 const supabaseStore = new SupabaseStore(supabase, SESSION_ID);
-let client = null;
 
 function createWhatsAppClient() {
   const sessionPath = path.join(__dirname, `.wwebjs_auth/session-${SESSION_ID}`);
@@ -105,11 +124,11 @@ function setupClientEvents(c) {
   });
 
   c.on('ready', () => {
-    log('info', '✅ WhatsApp client ready.');
+    log('info', '✅ WhatsApp client is ready.');
   });
 
   c.on('authenticated', () => {
-    log('info', '🔐 Authenticated.');
+    log('info', '🔐 Client authenticated.');
   });
 
   c.on('remote_session_saved', () => {
@@ -117,9 +136,11 @@ function setupClientEvents(c) {
   });
 
   c.on('disconnected', async reason => {
-    log('warn', `⚠️ Disconnected: ${reason}`);
-    await client.destroy();
-    client = null;
+    log('warn', `Client disconnected: ${reason}`);
+    if (client) {
+      await client.destroy();
+      client = null;
+    }
     setTimeout(startClient, 10000);
   });
 
@@ -145,6 +166,11 @@ async function handleIncomingMessage(msg) {
 }
 
 async function sendToN8nWebhook(payload, attempt = 0) {
+  if (!N8N_WEBHOOK_URL) {
+    log('warn', 'Webhook skipped: N8N_WEBHOOK_URL not set.');
+    return;
+  }
+
   try {
     await axios.post(N8N_WEBHOOK_URL, payload, { timeout: 10000 });
     log('info', '✅ Webhook sent.');
@@ -167,10 +193,10 @@ const app = express();
 app.use(express.json());
 
 app.get('/', (_, res) => {
-  res.status(200).json({ status: '✅ Bot is alive', sessionId: SESSION_ID });
+  res.status(200).json({ status: '✅ Bot running', sessionId: SESSION_ID });
 });
 
 app.listen(PORT, () => {
-  log('info', `🚀 Server running on http://localhost:${PORT}`);
+  log('info', `🚀 Server started on http://localhost:${PORT}`);
   startClient();
 });
