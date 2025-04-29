@@ -85,7 +85,7 @@ class SupabaseStore {
 }
 
 const supabaseStore = new SupabaseStore(supabase, SESSION_ID);
-
+let client = null;
 function createWhatsAppClient() {
   const sessionPath = path.join(__dirname, `.wwebjs_auth/session-${SESSION_ID}`);
   const parentDir = path.dirname(sessionPath);
