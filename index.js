@@ -118,10 +118,10 @@ function createWhatsAppClient() {
 }
 
 function setupClientEvents(c) {
-  c.on('qr', qr => {
-    console.log('📱 Scan QR Code:', `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}`);
-    qrcode.generate(qr, { small: true });
-  });
+ c.on('qr', qr => {
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}`;
+  log('warn', `📱 Scan QR Code: ${qrUrl}`);
+});
 
   c.on('ready', () => {
     log('info', '✅ WhatsApp client is ready.');
@@ -194,6 +194,25 @@ app.use(express.json());
 
 app.get('/', (_, res) => {
   res.status(200).json({ status: '✅ Bot running', sessionId: SESSION_ID });
+});
+app.post('/send-message', async (req, res) => {
+  const { groupId, message } = req.body;
+
+  if (!groupId || !message) {
+    return res.status(400).json({ success: false, error: 'Missing groupId or message' });
+  }
+
+  if (!client) {
+    return res.status(503).json({ success: false, error: 'WhatsApp client not ready' });
+  }
+
+  try {
+    const formattedGroupId = groupId.endsWith('@g.us') ? groupId : `${groupId}@g.us`;
+    const sentMessage = await client.sendMessage(formattedGroupId, message);
+    return res.status(200).json({ success: true, messageId: sentMessage.id.id });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.listen(PORT, () => {
