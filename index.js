@@ -9,6 +9,8 @@ const { createClient } = require('@supabase/supabase-js');
 // --- Config ---
 const PORT = process.env.PORT || 3000;
 const SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'default_session';
+const BOT_VERSION = '1.0.0'; // Optional versioning
+const startedAt = Date.now();
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -189,14 +191,18 @@ async function handleIncomingMessage(msg) {
   }
 
   // Memory logging every 50 messages
-  messageCount++;
-  if (messageCount % 50 === 0) {
-    const mem = process.memoryUsage();
-    log(
-      'info',
-      `🧠 Memory usage — RSS: ${(mem.rss / 1024 / 1024).toFixed(1)} MB, Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(1)} MB`
-    );
+messageCount++;
+if (messageCount % 50 === 0) {
+  const mem = process.memoryUsage();
+  const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
+  const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
+  log('info', `🧠 Memory usage — RSS: ${rssMB} MB, Heap: ${heapMB} MB`);
+
+  // Optional warning threshold
+  if (parseFloat(rssMB) > 300) {
+    log('warn', '⚠️ RSS memory usage above 300MB. Consider restarting or increasing instance size.');
   }
+}
 
   const payload = {
     groupId,
@@ -244,17 +250,35 @@ async function sendToN8nWebhook(payload, attempt = 0) {
 }
 
 async function startClient() {
-  if (client) return;
+  if (client) {
+    log('info', '⏳ Client already exists, skipping re-init.');
+    return;
+  }
+
+  log('info', '🚀 Starting WhatsApp client...');
   client = createWhatsAppClient();
   setupClientEvents(client);
-  await client.initialize();
+
+  try {
+    await client.initialize();
+    log('info', '✅ WhatsApp client initialized.');
+  } catch (err) {
+    log('error', `❌ WhatsApp client failed to initialize: ${err.message}`);
+    client = null;
+  }
 }
 
 const app = express();
 app.use(express.json());
 
 app.get('/', (_, res) => {
-  res.status(200).json({ status: '✅ Bot running', sessionId: SESSION_ID });
+  res.status(200).json({
+    status: '✅ Bot running',
+    sessionId: SESSION_ID,
+    version: BOT_VERSION,
+    uptimeMinutes: Math.floor((Date.now() - startedAt) / 60000),
+    timestamp: new Date().toISOString(),
+  });
 });
 app.post('/send-message', async (req, res) => {
   const { groupId, message } = req.body;
@@ -278,5 +302,15 @@ app.post('/send-message', async (req, res) => {
 
 app.listen(PORT, () => {
   log('info', `🚀 Server started on http://localhost:${PORT}`);
+  log('info', `🤖 Bot Version: ${BOT_VERSION}`);
   startClient();
 });
+
+setInterval(async () => {
+  if (!client) {
+    log('warn', '🕵️ Watchdog detected missing client. Restarting...');
+    await startClient();
+  } else {
+    log('info', '✅ Watchdog check: client active.');
+  }
+}, 5 * 60 * 1000); // every 5 minutes
