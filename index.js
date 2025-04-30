@@ -153,6 +153,8 @@ function setupClientEvents(c) {
   c.on('message', handleIncomingMessage);
 }
 
+let messageCount = 0;
+
 async function handleIncomingMessage(msg) {
   if (!msg.from.endsWith('@g.us')) return;
 
@@ -169,9 +171,9 @@ async function handleIncomingMessage(msg) {
     if (quoted?.id?.id) {
       hasReply = true;
       replyInfo = {
-  message_id: quoted?.id?.id || null,
-  text: quoted?.body || null
-};
+        message_id: quoted?.id?.id || null,
+        text: quoted?.body || null,
+      };
     }
   } catch (err) {
     log('warn', `⚠️ Failed to get quoted message: ${err.message}`);
@@ -184,6 +186,16 @@ async function handleIncomingMessage(msg) {
   if (!isImportant) {
     log('info', '🚫 Ignored non-valuation message.');
     return;
+  }
+
+  // Memory logging every 50 messages
+  messageCount++;
+  if (messageCount % 50 === 0) {
+    const mem = process.memoryUsage();
+    log(
+      'info',
+      `🧠 Memory usage — RSS: ${(mem.rss / 1024 / 1024).toFixed(1)} MB, Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(1)} MB`
+    );
   }
 
   const payload = {
@@ -205,15 +217,28 @@ async function sendToN8nWebhook(payload, attempt = 0) {
     return;
   }
 
+  // Truncate long texts
+  if (payload.text?.length > 1000) {
+    payload.text = payload.text.slice(0, 1000) + '... [truncated]';
+  }
+  if (payload.replyInfo?.text?.length > 500) {
+    payload.replyInfo.text = payload.replyInfo.text.slice(0, 500) + '... [truncated]';
+  }
+
+  // Estimate payload size
+  const payloadSize = Buffer.byteLength(JSON.stringify(payload), 'utf8');
+  if (payloadSize > 90_000) {
+    log('warn', `🚫 Payload too large (${payloadSize} bytes). Skipping webhook.`);
+    return;
+  }
+
   try {
     await axios.post(N8N_WEBHOOK_URL, payload, { timeout: 10000 });
-    log('info', '✅ Webhook sent.');
+    log('info', `✅ Webhook sent (${payloadSize} bytes).`);
   } catch (err) {
     log('error', `Webhook attempt ${attempt + 1} failed: ${err.message}`);
     if (attempt < 2) {
-     setTimeout(() => {
-  sendToN8nWebhook(payload, attempt + 1);
-}, 1000 * (attempt + 1));
+      setTimeout(() => sendToN8nWebhook(payload, attempt + 1), 1000 * (attempt + 1));
     }
   }
 }
