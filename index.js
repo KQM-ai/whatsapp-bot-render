@@ -155,13 +155,47 @@ function setupClientEvents(c) {
 
 async function handleIncomingMessage(msg) {
   if (!msg.from.endsWith('@g.us')) return;
+
+  const groupId = msg.from;
+  const senderId = msg.author || msg.from;
+  const text = msg.body || '';
+  const messageId = msg?.id?.id?.toString?.() || '';
+
+  let replyInfo = null;
+  let hasReply = false;
+
+  try {
+    const quoted = await msg.getQuotedMessage?.();
+    if (quoted?.id?.id) {
+      hasReply = true;
+      replyInfo = {
+  message_id: quoted?.id?.id || null,
+  text: quoted?.body || null
+};
+    }
+  } catch (err) {
+    log('warn', `⚠️ Failed to get quoted message: ${err.message}`);
+  }
+
+  const isImportant =
+    text.toLowerCase().includes('valuation') ||
+    (hasReply && replyInfo?.text?.toLowerCase().includes('valuation'));
+
+  if (!isImportant) {
+    log('info', '🚫 Ignored non-valuation message.');
+    return;
+  }
+
   const payload = {
-    groupId: msg.from,
-    senderId: msg.author || msg.from,
-    text: msg.body,
-    messageId: msg.id.id,
+    groupId,
+    senderId,
+    text,
+    messageId,
+    hasReply,
+    replyInfo,
     timestamp: new Date(msg.timestamp * 1000).toISOString(),
   };
+
   await sendToN8nWebhook(payload);
 }
 
@@ -177,7 +211,9 @@ async function sendToN8nWebhook(payload, attempt = 0) {
   } catch (err) {
     log('error', `Webhook attempt ${attempt + 1} failed: ${err.message}`);
     if (attempt < 2) {
-      setTimeout(() => sendToN8nWebhook(payload, attempt + 1), 1000 * (attempt + 1));
+     setTimeout(() => {
+  sendToN8nWebhook(payload, attempt + 1);
+}, 1000 * (attempt + 1));
     }
   }
 }
