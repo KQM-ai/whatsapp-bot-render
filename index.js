@@ -308,9 +308,24 @@ app.listen(PORT, () => {
 
 setInterval(async () => {
   if (!client) {
-    log('warn', '🕵️ Watchdog detected missing client. Restarting...');
+    log('warn', '🕵️ Watchdog: client is missing. Restarting...');
     await startClient();
-  } else {
-    log('info', '✅ Watchdog check: client active.');
+    return;
+  }
+
+  try {
+    const state = await client.getState();
+    log('info', `✅ Watchdog: client state is "${state}".`);
+
+    if (state !== 'CONNECTED') {
+      log('warn', `⚠️ Watchdog detected bad state "${state}". Restarting client...`);
+      await client.destroy();
+      client = null;
+      await startClient();
+    }
+  } catch (err) {
+    log('error', `🚨 Watchdog error during state check: ${err.message}. Restarting...`);
+    client = null;
+    await startClient();
   }
 }, 5 * 60 * 1000); // every 5 minutes
