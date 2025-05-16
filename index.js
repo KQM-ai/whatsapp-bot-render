@@ -6,18 +6,6 @@ const express = require('express');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
-// Add API key authentication
-const API_KEY = process.env.API_KEY || 'Alsk-1314-';
-
-// Middleware for API authentication
-const authenticateRequest = (req, res, next) => {
-  const providedKey = req.headers['x-api-key'];
-  if (!providedKey || providedKey !== API_KEY) {
-    return res.status(401).json({ success: false, error: 'Unauthorized' });
-  }
-  next();
-};
-
 // --- Config ---
 const PORT = process.env.PORT || 3000;
 const SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'default_session';
@@ -389,7 +377,7 @@ app.get('/', (_, res) => {
     timestamp: new Date().toISOString(),
   });
 });
-app.post('/send-message', authenticateRequest, async (req, res) => {
+app.post('/send-message', async (req, res) => {
   const { groupId, message } = req.body;
 
   if (!groupId || !message) {
