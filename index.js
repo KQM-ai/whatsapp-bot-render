@@ -6,6 +6,18 @@ const express = require('express');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
+// Add API key authentication
+const API_KEY = process.env.API_KEY || 'Alsk-1314-';
+
+// Middleware for API authentication
+const authenticateRequest = (req, res, next) => {
+  const providedKey = req.headers['x-api-key'];
+  if (!providedKey || providedKey !== API_KEY) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+  next();
+};
+
 // --- Config ---
 const PORT = process.env.PORT || 3000;
 const SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'default_session';
@@ -89,34 +101,54 @@ class SupabaseStore {
 const supabaseStore = new SupabaseStore(supabase, SESSION_ID);
 let client = null;
 function createWhatsAppClient() {
-  const sessionPath = path.join(__dirname, `.wwebjs_auth/session-${SESSION_ID}`);
-  const parentDir = path.dirname(sessionPath);
-  if (!fs.existsSync(parentDir)) {
-    fs.mkdirSync(parentDir, { recursive: true });
-    log('info', `📁 Created session directory: ${parentDir}`);
-  }
+  try {
+    // First, ensure auth folder exists
+    const sessionPath = path.join(__dirname, `.wwebjs_auth/session-${SESSION_ID}`);
+    const parentDir = path.dirname(sessionPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+      log('info', `📁 Created session directory: ${parentDir}`);
+    }
+    
+    // Add .gitkeep to ensure folder is tracked
+    const gitkeepPath = path.join(parentDir, '.gitkeep');
+    if (!fs.existsSync(gitkeepPath)) {
+      fs.writeFileSync(gitkeepPath, '');
+      log('info', 'Added .gitkeep to session directory');
+    }
 
-  return new Client({
-    authStrategy: new RemoteAuth({
-      store: supabaseStore,
-      backupSyncIntervalMs: 300000,
-      dataPath: sessionPath,
-    }),
-    puppeteer: {
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu',
-      ],
-    },
-    qrTimeout: 0,
-  });
+    return new Client({
+      authStrategy: new RemoteAuth({
+        store: supabaseStore,
+        backupSyncIntervalMs: 300000,
+        dataPath: sessionPath,
+      }),
+      puppeteer: {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu',
+          // Additional memory-saving flags
+          '--js-flags=--max-old-space-size=256',
+          '--disable-extensions',
+        ],
+        // Set a reasonable timeout
+        timeout: 120000,
+      },
+      qrTimeout: 90000, // Set a reasonable QR timeout
+      // Add connection validation options
+      restartOnAuthFail: true,
+    });
+  } catch (err) {
+    log('error', `Failed to create WhatsApp client: ${err.message}`);
+    return null;
+  }
 }
 
 function setupClientEvents(c) {
@@ -138,18 +170,56 @@ function setupClientEvents(c) {
   });
 
   c.on('disconnected', async reason => {
-    log('warn', `Client disconnected: ${reason}`);
-    if (client) {
+  log('warn', `Client disconnected: ${reason}`);
+  if (client) {
+    try {
       await client.destroy();
-      client = null;
+    } catch (err) {
+      log('error', `Error destroying client after disconnect: ${err.message}`);
     }
-    setTimeout(startClient, 10000);
-  });
+    client = null;
+  }
+  
+  // Exponential backoff for reconnection
+  const attemptReconnection = (attempt = 1) => {
+    const delay = Math.min(Math.pow(2, attempt) * 1000, 60000); // Cap at 60 seconds
+    log('info', `Will attempt reconnection (#${attempt}) in ${delay/1000} seconds`);
+    
+    setTimeout(async () => {
+      try {
+        await startClient();
+        
+        // If still not connected, try again with increased backoff
+        const state = await client?.getState();
+        if (!client || state !== 'CONNECTED') {
+          log('warn', `Reconnection attempt #${attempt} failed. State: ${state || 'No client'}`);
+          attemptReconnection(attempt + 1);
+        } else {
+          log('info', `✅ Reconnected successfully after ${attempt} attempts`);
+        }
+      } catch (err) {
+        log('error', `Error during reconnection attempt #${attempt}: ${err.message}`);
+        attemptReconnection(attempt + 1);
+      }
+    }, delay);
+  };
+  
+  attemptReconnection();
+});
 
   c.on('auth_failure', async () => {
     log('error', '❌ Auth failed. Clearing session.');
-    await supabaseStore.delete();
-    process.exit(1);
+    try {
+      await supabaseStore.delete();
+      log('info', 'Session deleted. Will attempt to reinitialize...');
+      client = null;
+      // Try to recover instead of exiting
+      setTimeout(startClient, 10000);
+    } catch (err) {
+      log('error', `Failed to clean up after auth failure: ${err.message}`);
+      // In extreme cases, exit might be necessary
+      process.exit(1);
+    }
   });
 
   c.on('message', handleIncomingMessage);
@@ -243,8 +313,12 @@ async function sendToN8nWebhook(payload, attempt = 0) {
     log('info', `✅ Webhook sent (${payloadSize} bytes).`);
   } catch (err) {
     log('error', `Webhook attempt ${attempt + 1} failed: ${err.message}`);
-    if (attempt < 2) {
-      setTimeout(() => sendToN8nWebhook(payload, attempt + 1), 1000 * (attempt + 1));
+    if (attempt < 4) { // Try up to 5 times
+      const backoff = Math.min(Math.pow(2, attempt) * 1000, 15000); // Cap at 15 seconds
+      log('warn', `Will retry webhook in ${backoff/1000} seconds...`);
+      setTimeout(() => sendToN8nWebhook(payload, attempt + 1), backoff);
+    } else {
+      log('error', 'Giving up on webhook after 5 attempts');
     }
   }
 }
@@ -271,6 +345,41 @@ async function startClient() {
 const app = express();
 app.use(express.json());
 
+// Graceful shutdown handling
+const gracefulShutdown = async (signal) => {
+  log('warn', `Received ${signal}. Shutting down gracefully...`);
+  
+  // Stop accepting new requests
+  server.close(() => {
+    log('info', 'HTTP server closed');
+  });
+  
+  // Destroy WhatsApp client properly
+  if (client) {
+    try {
+      log('info', 'Destroying WhatsApp client...');
+      await client.destroy();
+      log('info', 'WhatsApp client destroyed successfully');
+    } catch (err) {
+      log('error', `Error destroying client: ${err.message}`);
+    }
+  }
+  
+  // Exit with success code
+  setTimeout(() => {
+    log('info', 'Exiting process...');
+    process.exit(0);
+  }, 3000);
+};
+
+// Register shutdown handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('unhandledRejection', (reason, promise) => {
+  log('error', 'Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit, just log
+});
+
 app.get('/', (_, res) => {
   res.status(200).json({
     status: '✅ Bot running',
@@ -280,7 +389,7 @@ app.get('/', (_, res) => {
     timestamp: new Date().toISOString(),
   });
 });
-app.post('/send-message', async (req, res) => {
+app.post('/send-message', authenticateRequest, async (req, res) => {
   const { groupId, message } = req.body;
 
   if (!groupId || !message) {
@@ -300,10 +409,12 @@ app.post('/send-message', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   log('info', `🚀 Server started on http://localhost:${PORT}`);
   log('info', `🤖 Bot Version: ${BOT_VERSION}`);
-  startClient();
+  log('info', '💻 Starting WhatsApp client in 3 seconds...');
+  // Slight delay to ensure server is fully up
+  setTimeout(startClient, 3000);
 });
 
 setInterval(async () => {
@@ -329,3 +440,143 @@ setInterval(async () => {
     await startClient();
   }
 }, 5 * 60 * 1000); // every 5 minutes
+
+// Keep-alive endpoint
+app.get('/ping', (_, res) => {
+  res.status(200).send('pong');
+});
+
+// Self-ping mechanism (in addition to UptimeRobot)
+let lastPingSent = 0;
+const selfPing = async () => {
+  try {
+    // Only ping if we haven't received an external ping recently
+    const now = Date.now();
+    if (now - lastPingSent > 4 * 60 * 1000) { // 4 minutes
+      lastPingSent = now;
+      // Get the deployed URL from environment or construct it
+      const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+      await axios.get(`${appUrl}/ping`, { timeout: 5000 });
+      log('debug', '🏓 Self-ping successful');
+    }
+  } catch (err) {
+    log('warn', `Self-ping failed: ${err.message}`);
+  }
+};
+
+// Update your request handlers to record external pings
+app.use((req, res, next) => {
+  if (req.path === '/ping') {
+    lastPingSent = Date.now();
+  }
+  next();
+});
+
+// Run self-ping every 4 minutes (in addition to UptimeRobot's 5 minutes)
+setInterval(selfPing, 4 * 60 * 1000);
+
+const checkMemoryUsage = () => {
+  const mem = process.memoryUsage();
+  const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
+  const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
+  const heapTotalMB = (mem.heapTotal / 1024 / 1024).toFixed(1);
+  
+  log('info', `🧠 Memory: RSS=${rssMB}MB, HeapUsed=${heapMB}MB, HeapTotal=${heapTotalMB}MB`);
+  
+  // Critical memory situation
+  if (parseFloat(rssMB) > 450) {
+    log('error', '🚨 CRITICAL MEMORY USAGE! Force restarting client...');
+    
+    // Force garbage collection if available
+    if (global.gc) {
+      log('warn', 'Forcing garbage collection...');
+      global.gc();
+    }
+    
+    // Last resort - restart the client
+    if (client) {
+      (async () => {
+        try {
+          await client.destroy();
+          client = null;
+          log('warn', 'Client destroyed due to memory pressure');
+          setTimeout(startClient, 5000);
+        } catch (err) {
+          log('error', `Failed to restart client: ${err.message}`);
+        }
+      })();
+    }
+  }
+  // High memory situation
+  else if (parseFloat(rssMB) > 350) {
+    log('warn', '⚠️ High memory usage detected');
+    if (global.gc) {
+      log('info', 'Suggesting garbage collection...');
+      global.gc();
+    }
+  }
+};
+
+// Run memory check every 5 minutes
+setInterval(checkMemoryUsage, 5 * 60 * 1000);
+
+app.get('/health', async (_, res) => {
+  try {
+    // Check WhatsApp client
+    const clientState = client ? await client.getState() : 'NO_CLIENT';
+    
+    // Check Supabase connection
+    let supabaseStatus = 'UNKNOWN';
+    try {
+      const { data, error } = await supabase.from('whatsapp_sessions').select('count(*)', { count: 'exact', head: true });
+      supabaseStatus = error ? 'ERROR' : 'CONNECTED';
+    } catch (err) {
+      supabaseStatus = 'ERROR: ' + err.message;
+    }
+    
+    // Get memory metrics
+    const mem = process.memoryUsage();
+    
+    // Build health response
+    const health = {
+      status: clientState === 'CONNECTED' && supabaseStatus === 'CONNECTED' ? 'healthy' : 'degraded',
+      version: BOT_VERSION,
+      uptime: {
+        seconds: Math.floor((Date.now() - startedAt) / 1000),
+        readable: formatUptime(Date.now() - startedAt),
+      },
+      whatsapp: {
+        state: clientState,
+        ready: client ? true : false,
+      },
+      supabase: supabaseStatus,
+      system: {
+        memory: {
+          rss: `${(mem.rss / 1024 / 1024).toFixed(1)} MB`,
+          heapUsed: `${(mem.heapUsed / 1024 / 1024).toFixed(1)} MB`,
+          heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MB`,
+        },
+        nodejs: process.version,
+      },
+      timestamp: new Date().toISOString(),
+    };
+    
+    res.status(200).json(health);
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      error: err.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Helper function to format uptime
+function formatUptime(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  
+  return `${days}d ${hours % 24}h ${minutes % 60}m ${seconds % 60}s`;
+}
